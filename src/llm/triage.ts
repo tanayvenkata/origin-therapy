@@ -165,10 +165,19 @@ function deriveDraftReply(calls: ToolCall[]): string | null {
 }
 
 function fallback(item: InboxItem, reason: string): ItemOutput {
+  const calls = getToolCallsForItem(item.id);
+  const escalation = deriveEscalation(calls);
+
+  // Fail safe: if the agent had already escalated before the error, never let
+  // the fallback downgrade that signal. Align urgency/classification with the
+  // escalation so a P0 safeguarding case can't be silently shipped as P2/other.
+  const urgency = escalation?.severity ?? "P2";
+  const classification = escalation?.severity === "P0" ? "safeguarding" : "other";
+
   return {
     item_id: item.id,
-    classification: "other",
-    urgency: "P2",
+    classification,
+    urgency,
     requires_human_review: true,
     extracted_intake: {
       child_name: null,
@@ -180,12 +189,12 @@ function fallback(item: InboxItem, reason: string): ItemOutput {
       member_id: null,
     },
     missing_info: ["Automated triage failed for this item; manual review required."],
-    tools_called: getToolCallsForItem(item.id),
+    tools_called: calls,
     recommended_next_action:
       "Manually triage this item; the automated agent could not complete it.",
-    draft_reply: null,
-    task_ids: deriveTaskIds(getToolCallsForItem(item.id)),
-    escalation: deriveEscalation(getToolCallsForItem(item.id)),
+    draft_reply: deriveDraftReply(calls),
+    task_ids: deriveTaskIds(calls),
+    escalation,
     decision_rationale: `Fallback output: automated triage error (${reason}).`,
   };
 }

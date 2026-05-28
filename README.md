@@ -66,7 +66,7 @@ runAgent(inbox)                                    [src/agent.ts]
 - **Under-escalation (the dangerous one):** a safeguarding signal phrased obliquely. Mitigated by an explicit "buried disclosure" rule in the prompt + the `safeguarding ⇒ P0` repair. A missed P0 is the worst outcome, so the system is biased to surface, not suppress.
 - **Over-escalation:** tone-driven false P0s. Explicitly addressed in the prompt; item_8 confirms it holds.
 - **Extraction errors / hallucinated intake:** the model could invent a DOB or payer. Partly bounded by `missing_info` discipline and human review on every item.
-- **Model/API failure mid-batch:** handled by the per-item fallback so one bad item can't break the batch or the audit trace.
+- **Model/API failure mid-batch:** handled by the per-item fallback so one bad item can't break the batch or the audit trace. The fallback fails *safe* — it aligns urgency/classification with any escalation already in the trace, so a pre-failure P0 can't be downgraded to P2. (Known edge: the validator's batch-wide "≥3 distinct tools" floor is a property nothing enforces if the API is fully down for every item; I'd rather fail loudly there than inject performative tool calls the rubric penalizes.)
 - **Non-determinism:** runtime LLM means outputs can vary run-to-run; the tool stubs are deterministic, but judgment is not.
 
 **How I'd evaluate this in production (the part that matters for a regulated, high-trust setting):**
