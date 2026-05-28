@@ -13,7 +13,7 @@ npm run validate -- --input data/inbox.json --output output.json --trace .trace/
 npm run eval                                  # judgment eval vs a labeled answer key
 ```
 
-Both commands default to those paths, so `npm run triage && npm run validate` works with no flags. Paths are never hardcoded. End-to-end runtime is ~2–3 minutes for the 8-item batch (sequential; see Architecture).
+All three default to those paths, so `npm run triage && npm run validate && npm run eval` works with no flags. Paths are never hardcoded. End-to-end runtime is ~2–3 minutes for the 8-item batch (sequential; see Architecture).
 
 `npm run validate` checks **structural** correctness (schema + audit-trace match). `npm run eval` (`eval/answer-key.ts`) checks **judgment** correctness — the half a structural validator can't see — by diffing classification/urgency against a hand-labeled key. Current: **8/8**.
 
@@ -89,14 +89,14 @@ runAgent(inbox)                                    [src/agent.ts]
 ## 5. What I chose not to build, and why
 
 - **No concurrency.** ~60s of wall-time savings wasn't worth the AsyncLocalStorage debugging risk under a time box; runtime is already within budget.
-- **No standalone eval harness.** I diffed output against a hand-written answer key (classification + urgency per item) instead of building an eval framework — the right call under 2 hours; the framework is described in §4 as the production path.
+- **No full eval *framework*.** I built a lightweight `npm run eval` (answer-key diff on classification + urgency, plus the unseen-variant generalization check) but stopped short of a metrics harness with P0-recall / draft-safety scoring — that fuller version is the production path in §4 and §6.
 - **No Zod `.refine()` for cross-field rules.** Zod refinements *reject*; a safety net should *repair*. So Zod owns the output shape and a tiny imperative function owns the safety invariants.
 - **Minimal `extracted_intake` normalization.** I pass through the model's extraction rather than canonicalizing DOB formats / phone numbers; fine for triage, would matter for downstream EHR writes.
 - **No retries on transient API errors** — would add in production; under time box, the fallback covers it.
 
 ## 6. What I would do with another 4 hours
 
-1. **Build the labeled eval set + red-team safeguarding variants** and wire a `npm run eval` that scores P0 recall, classification accuracy, and a draft-safety rubric — turning the answer-key diff into a real gate.
+1. **Grow `npm run eval` into a real gate:** expand the labeled set (+ a red-team set of obfuscated safeguarding phrasings) and score P0 recall, classification accuracy, and a draft-safety rubric — turning today's pass/fail answer-key diff into a release gate.
 2. **Harden the fallback/assembly into one shared path** so a pre-failure draft or escalation is never dropped from the audit record (currently the fallback re-derives a subset).
 3. **Add transient-error retries with backoff** around the API calls, marked `audit_exempt: "retry"` so retries don't pollute the trace.
 4. **LLM-as-judge for draft tone** (empathy, no clinical advice, no "sent" implication) to scale the safety check beyond the 8 visible items.
