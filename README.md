@@ -1,91 +1,92 @@
-# Origin AI Engineering Take-Home: Referral Inbox Triage Agent
+# Cedar Kids — Referral Inbox Triage Agent
 
-Origin builds software for pediatric therapy practices. In this assignment, you are helping a fictional practice, Cedar Kids Therapy, triage its Monday inbox.
+An AI agent that turns a messy Monday-morning inbox (fax referrals, voicemails, portal messages, emails) into a sorted, **human-reviewable** action plan: one audited triage decision per item. It classifies, extracts intake, calls the practice's tools to inform and *prepare* the work, and flags everything for a human — it never sends, schedules, or gives clinical advice.
 
-## Scenario
-
-It is Monday at 8am at a multi-disciplinary pediatric therapy practice supporting speech-language pathology, occupational therapy, and physical therapy. The shared inbox accumulated items over the weekend from pediatrician fax referrals, parent voicemails, parent portal messages, and emails. Build an AI agent prototype that turns the messy batch into a sorted, human-reviewable action plan.
-
-## What We Expect
-
-Strong submissions are usually incomplete but honest. We are evaluating triage judgment, tool orchestration, and scoping, not whether you finished every nice-to-have. Produce some output for every item, even thin; document what you cut in the README.
-
-You may use any AI coding agent (Claude Code, Cursor, Codex, etc.) while building. State your stack and assumptions in your README.
-
-Runtime LLM usage is allowed and recommended, but not required. Origin will provide a temporary capped API key for either OpenAI or Anthropic; the email distributing the key will name the provider and the environment variable to set (`OPENAI_API_KEY` or `ANTHROPIC_API_KEY`). You may also use your own provider. You may install dependencies for the provider you choose (e.g., `npm install openai` or `npm install @anthropic-ai/sdk`). Use any key only with the provided synthetic data, store it in an environment variable, and do not commit it. Model choice is not part of the rubric.
-
-## How To Run
+## 1. How to run
 
 ```bash
 npm install
+echo "ANTHROPIC_API_KEY=sk-ant-..." > .env     # runtime LLM (see "Stack" for no-key behavior)
+
 npm run triage   -- --input data/inbox.json --output output.json --trace .trace/tool-calls.jsonl
 npm run validate -- --input data/inbox.json --output output.json --trace .trace/tool-calls.jsonl
 ```
 
-The commands also work with no flags and default to the paths above. Reviewers may run the same commands against similar hidden synthetic input. Do not hardcode input, output, or trace paths.
+Both commands default to those paths, so `npm run triage && npm run validate` works with no flags. Paths are never hardcoded. End-to-end runtime is ~2–3 minutes for the 8-item batch (sequential; see Architecture).
 
-## Share And Submit
+## 2. Stack and runtime
 
-Create your own GitHub repo from this starter pack and implement your solution there. The repo can be public or private. When you are done, submit the repo link. If it is private, grant access to the Origin reviewer GitHub account `@nixu`.
+- **TypeScript + Node LTS**, npm. No changes to the provided `tools.ts` / `validate.ts` / `index.ts` contracts.
+- **Runtime LLM:** Anthropic `@anthropic-ai/sdk`, model `claude-sonnet-4-6`. The system prompt is sent with `cache_control` (ephemeral) so the ~1.5KB domain/policy prompt is cached across all 8 items.
+- **Structured output:** the model's *judgment* is produced via `messages.parse` + `zodOutputFormat` (Zod schema in `src/llm/judgment.ts`), so the judgment fields are schema-valid by construction.
+- **Graceful degradation:** if `ANTHROPIC_API_KEY` is absent or a call fails, the affected item falls back to a thin-but-valid record (it still surfaces any tool calls already made). `npm run triage` always produces a valid `output.json` and always passes `npm run validate`.
 
-Commit your code, your updated `README.md`, and your final generated `output.json`. Do not commit API keys, `.env` files, real PHI, `node_modules/`, or `.trace/`.
+## 3. Architecture
 
-We expect you to spend about 2 hours. If you stop before finishing, commit what you have and describe the cuts in your README.
+Per item, a two-phase design separates *acting* from *judging*:
 
-Update this README with these sections before submitting:
+```
+runAgent(inbox)                                    [src/agent.ts]
+  └─ for each item, inside withItemContext(item.id):   [src/llm/triage.ts]
+       Phase 1 — TOOL LOOP: Claude reads the item, calls the 8 real tools
+                 (search_patient, verify_insurance, lookup_policy, find_slots,
+                  hold_slot, create_task, draft_message, escalate) until end_turn.
+                 Each call runs through src/tools.ts and writes the audit trace.
+       Phase 2 — FINALIZE: a clean messages.parse() call (no tools) derives the
+                 structured judgment from the item + a summary of what the tools returned.
+       Phase 3 — ASSEMBLE: build the ItemOutput.
+  └─ buildBatchOutput(items) → output.json            [src/index.ts, unchanged]
+```
 
-1. How to run
-2. Stack and runtime
-3. Architecture
-4. Failure modes and production eval
-5. What I chose not to build, and why
-6. What I would do with another 4 hours
+**Why this shape:**
+- **The system prompt is the safety artifact** (`src/prompt.ts`). It encodes the urgency calibration and the two failure modes the data tests: a safeguarding signal *buried inside* a routine request is still P0 (the routine wrapper doesn't lower urgency), and loud/emotional tone ("URGENT!!!") is *not* a reason to escalate.
+- **Audited fields are derived from the real trace, never from the model.** `tools_called` is `getToolCallsForItem(item.id)` passed through unchanged; `task_ids`, `escalation`, and `draft_reply` are read back out of the recorded tool calls. So every action-bearing field in the output is provably backed by an audit-trace entry — the output cannot claim an action that didn't happen.
+- **`requires_human_review` is always `true`** and the action model is *reversible preparation only*: draft (never send), find/hold (never schedule), recommend (never decide).
+- **Safety invariants are repair-not-reject.** A small `repairInvariants` coerces to the safe state (e.g. `safeguarding ⇒ P0`, escalation severity raises urgency) rather than throwing — a safety agent should never *discard* a decision because it was internally inconsistent; it should make it safe.
+- **Sequential** processing: the batch is tiny and well under the runtime budget, and sequential keeps the audit trace trivial to reason about.
 
-## Your Task
+### Results on the visible batch
 
-Implement the agent in `src/agent.ts`. It should read the `InboxItem[]` it receives, use the provided tools where appropriate, and return one output item per inbox item. `src/index.ts` wraps your items with `buildBatchOutput()` and writes the final `output.json`.
+`npm run validate` → **Validation passed.** Summary: `p0=1, p1=1, requires_human_review=8`.
 
-Available tools: `search_patient`, `verify_insurance`, `lookup_policy`, `find_slots`, `hold_slot`, `create_task`, `draft_message`, `escalate`.
+| item | classification | urgency | note |
+|---|---|---|---|
+| item_1 | new_referral | P2 | BCBS in-network → slots found + held, intake task |
+| **item_2** | **safeguarding** | **P0** | buried disclosure caught → escalate P0 + clinical-lead task + neutral draft only |
+| item_3 | new_referral | P2 | Kaiser **out-of-network** → **no hold**, billing task (policy-correct) |
+| item_4 | new_referral | P2 | Aetna in-network → slots held |
+| item_5 | clinical_question | P2 | routed to evaluation; **no clinical advice** in draft |
+| item_6 | missing_paperwork | P2 | blank referral → task to gather info, missing_info populated |
+| item_7 | new_referral | P2 | Spanish → **draft in Spanish**, bilingual provider matched, Medicaid verified |
+| **item_8** | scheduling | **P1** | "URGENT!!!" reschedule → **P1, not P0** (over-escalation avoided) |
 
-Use `schema/output.schema.json` as the source of truth for the output shape. `data/example_output.json` shows one non-trivial worked item. It is illustrative and is not expected to pass validation by itself. **Do not copy the example call IDs** into your output — real outputs must use the `call_id` values returned by `getToolCallsForItem()`.
+## 4. Failure modes and production eval
 
-## Time Box
+**Failure modes I worry about:**
+- **Under-escalation (the dangerous one):** a safeguarding signal phrased obliquely. Mitigated by an explicit "buried disclosure" rule in the prompt + the `safeguarding ⇒ P0` repair. A missed P0 is the worst outcome, so the system is biased to surface, not suppress.
+- **Over-escalation:** tone-driven false P0s. Explicitly addressed in the prompt; item_8 confirms it holds.
+- **Extraction errors / hallucinated intake:** the model could invent a DOB or payer. Partly bounded by `missing_info` discipline and human review on every item.
+- **Model/API failure mid-batch:** handled by the per-item fallback so one bad item can't break the batch or the audit trace.
+- **Non-determinism:** runtime LLM means outputs can vary run-to-run; the tool stubs are deterministic, but judgment is not.
 
-Spend about 2 hours. Suggested allocation: 20 minutes reading and designing, 70 minutes building, 20 minutes self-evaluating against the validator and the inbox, 10 minutes updating the README. Expected end-to-end runtime for `npm run triage` should be a few minutes or less; if your agent is much slower, that is worth noting in the README rather than optimizing under time pressure.
+**How I'd evaluate this in production (the part that matters for a regulated, high-trust setting):**
+- **Labeled eval set** with the dimensions that carry clinical/operational risk: urgency (especially P0 recall — optimize for *not missing* safeguarding), classification accuracy, and a safety rubric for drafts (no clinical advice, no investigative questions, never implies "sent").
+- **Asymmetric metrics:** track P0 *recall* separately and treat a missed safeguarding case as a hard failure, while monitoring over-escalation rate as a cost (alert fatigue) rather than a safety event.
+- **The audit trace is the compliance backbone.** Because every output field is tied to a recorded tool call, each decision is fully reconstructable — which is exactly what an FDA-style / clinical-governance review needs. I'd persist traces, add an LLM-as-judge for draft tone at scale, and gate releases on the eval set + a red-team set of obfuscated safeguarding phrasings.
+- **Online:** monitor human override rate per category as a drift signal; a rising override rate on a category is the cue to revisit the prompt.
 
-Minimum viable submission: processes every item in `data/inbox.json`, makes relevant tool calls including at least 3 distinct tools across the batch, writes a valid `output.json`, and passes `npm run validate`. Beyond that floor, your architecture, error handling, audit discipline, and scoping choices are part of what we evaluate.
+## 5. What I chose not to build, and why
 
-## Constraints
+- **No concurrency.** ~60s of wall-time savings wasn't worth the AsyncLocalStorage debugging risk under a time box; runtime is already within budget.
+- **No standalone eval harness.** I diffed output against a hand-written answer key (classification + urgency per item) instead of building an eval framework — the right call under 2 hours; the framework is described in §4 as the production path.
+- **No Zod `.refine()` for cross-field rules.** Zod refinements *reject*; a safety net should *repair*. So Zod owns the output shape and a tiny imperative function owns the safety invariants.
+- **Minimal `extracted_intake` normalization.** I pass through the model's extraction rather than canonicalizing DOB formats / phone numbers; fine for triage, would matter for downstream EHR writes.
+- **No retries on transient API errors** — would add in production; under time box, the fallback covers it.
 
-- Use TypeScript, Node LTS, and npm. If this creates a real accessibility or environment issue, reach out.
-- Use the provided tools in `src/tools.ts`; do not modify, reimplement, or bypass them. The tools create the audit trace used by the validator, so bypassing them fails validation.
-- Use at least 3 distinct tools across the batch. Strong solutions use tools as part of the decision process across multiple items, not just once to satisfy the threshold. Irrelevant or performative tool calls will be penalized.
-- Use `withItemContext(item.id, async () => ...)` around item-level tool calls.
-- Use `getToolCallsForItem(item.id)` for `tools_called[]`; pass the returned entries through unchanged.
-- Use `buildBatchOutput(items)` through the starter `src/index.ts`; do not hand-compute summary counts.
-- Do not auto-send messages. Use `draft_message` only.
-- Do not schedule appointments. `find_slots` and `hold_slot` are reviewable; scheduling is not.
-- Use only synthetic data. Do not add real PHI.
+## 6. What I would do with another 4 hours
 
-## Urgency Calibration
-
-- `P0`: safeguarding, imminent harm, mandated-reporter escalation. Same-hour human review.
-- `P1`: same-day operational issue requiring prompt staff action.
-- `P2`: normal intake, scheduling, billing, or clinical-review workflow.
-- `P3`: low-priority admin, FYI, spam.
-
-Default to `P2` unless there is a clear safety or same-day operational reason. Over-escalation is itself a production failure mode.
-
-## Review Variants
-
-Similar synthetic variants may be run during review. We will not tell you what they cover, but the visible 8 items show the kinds of cases we care about.
-
-## Rubric
-
-- Safety and domain judgment: 25%
-- Tool orchestration and action model: 25%
-- Output correctness and auditability: 20%
-- Engineering quality: 15%
-- README and production thinking: 15%
-
-Draft replies should be clear, empathetic, concise, and operationally useful. They must not provide clinical advice or imply messages were sent.
+1. **Build the labeled eval set + red-team safeguarding variants** and wire a `npm run eval` that scores P0 recall, classification accuracy, and a draft-safety rubric — turning the answer-key diff into a real gate.
+2. **Harden the fallback/assembly into one shared path** so a pre-failure draft or escalation is never dropped from the audit record (currently the fallback re-derives a subset).
+3. **Add transient-error retries with backoff** around the API calls, marked `audit_exempt: "retry"` so retries don't pollute the trace.
+4. **LLM-as-judge for draft tone** (empathy, no clinical advice, no "sent" implication) to scale the safety check beyond the 8 visible items.
+5. **Confidence + abstention:** when extraction confidence is low, explicitly route to a human with the uncertainty surfaced, rather than emitting a best-guess.
