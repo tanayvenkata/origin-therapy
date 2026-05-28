@@ -28,7 +28,7 @@ Results: the reworded safeguarding case → **P0** (rule generalizes, not patter
 ## 2. Stack and runtime
 
 - **TypeScript + Node LTS**, npm. No changes to the provided `tools.ts` / `validate.ts` / `index.ts` contracts.
-- **Runtime LLM:** Anthropic `@anthropic-ai/sdk`, model `claude-sonnet-4-6`. The system prompt is sent with `cache_control` (ephemeral) so the ~1.5KB domain/policy prompt is cached across all 8 items.
+- **Runtime LLM:** Anthropic `@anthropic-ai/sdk`, model `claude-sonnet-4-6`. The system prompt is sent with `cache_control` (ephemeral) so the ~5KB domain/policy prompt is cached across all 8 items.
 - **Structured output:** the model's *judgment* is produced via `messages.parse` + `zodOutputFormat` (Zod schema in `src/llm/judgment.ts`), so the judgment fields are schema-valid by construction.
 - **Graceful degradation:** if `ANTHROPIC_API_KEY` is absent or a call fails, the affected item falls back to a thin-but-valid record (it still surfaces any tool calls already made). `npm run triage` always produces a valid `output.json` and always passes `npm run validate`.
 

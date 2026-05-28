@@ -2,6 +2,7 @@ node_modules/
 dist/
 .trace/
 _internal/
+.claude/
 /output.*.json
 /take-home.tgz
 .env
