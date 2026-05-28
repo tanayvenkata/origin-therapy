@@ -10,9 +10,20 @@ echo "ANTHROPIC_API_KEY=sk-ant-..." > .env     # runtime LLM (see "Stack" for no
 
 npm run triage   -- --input data/inbox.json --output output.json --trace .trace/tool-calls.jsonl
 npm run validate -- --input data/inbox.json --output output.json --trace .trace/tool-calls.jsonl
+npm run eval                                  # judgment eval vs a labeled answer key
 ```
 
 Both commands default to those paths, so `npm run triage && npm run validate` works with no flags. Paths are never hardcoded. End-to-end runtime is ~2–3 minutes for the 8-item batch (sequential; see Architecture).
+
+`npm run validate` checks **structural** correctness (schema + audit-trace match). `npm run eval` (`eval/answer-key.ts`) checks **judgment** correctness — the half a structural validator can't see — by diffing classification/urgency against a hand-labeled key. Current: **8/8**.
+
+**Generalization check (overfitting guard):** because reviewers run hidden variants, I also ran the agent on 3 unseen adversarial items (`data/inbox.variants.json`): a *reworded* buried-safeguarding disclosure, an ALL-CAPS-but-routine billing dispute, and spam.
+
+```bash
+npm run triage -- --input data/inbox.variants.json --output output.variants.json --trace .trace/variants.jsonl
+```
+
+Results: the reworded safeguarding case → **P0** (rule generalizes, not pattern-matched), the angry billing dispute → **P2, not escalated** (tone ≠ urgency holds), spam → **P3**. The agent reasons from content, not from the visible 8.
 
 ## 2. Stack and runtime
 
