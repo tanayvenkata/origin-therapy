@@ -15,7 +15,8 @@
     "ajv-formats": "^3.0.1",
     "dotenv": "^17.4.2",
     "tsx": "^4.19.2",
-    "ulid": "^2.3.0"
+    "ulid": "^2.3.0",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
