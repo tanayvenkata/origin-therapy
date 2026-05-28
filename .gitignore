@@ -1,11 +1,10 @@
+node_modules/
+dist/
+.trace/
+_internal/
+/output.*.json
+/take-home.tgz
 .env
 .env.*
 !.env.example
-__pycache__/
-*.pyc
-.venv/
-node_modules/
-.DS_Store
-.python-version
-dist/
 *.log
